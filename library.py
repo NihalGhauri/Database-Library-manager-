@@ -1,16 +1,16 @@
+
 import streamlit as st
 import json
 import os
 import random
 from datetime import datetime
-import pymongo
 from pymongo import MongoClient
-from bson import ObjectId
+from motor.motor_asyncio import AsyncIOMotorClient
 
 
 def connect_to_mongodb():
     try:
-        connection_string = "mongodb://nihal:nihal123@cluster0-shard-00-00.125nk.mongodb.net:27017,cluster0-shard-00-01.125nk.mongodb.net:27017,cluster0-shard-00-02.125nk.mongodb.net:27017/?replicaSet=atlas-ovlxfn-shard-0&ssl=true&authSource=admin"
+        connection_string = st.secrets["DATABASE"]
         client = MongoClient(connection_string)
         db = client["personal_library"]
         collection = db["books"]
@@ -194,32 +194,43 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-
 def load_library():
     if st.session_state.mongo_available:
         try:
-            cursor = st.session_state.mongo_collection.find({}) # ? find all data from mongo db
+            cursor = st.session_state.mongo_collection.find({})
             library = []
             for doc in cursor:
-                doc['_id'] = str(doc['_id']) # ? convert _id to string
-                library.append(doc) # ? Add each book to the list
+                doc['_id'] = str(doc['_id'])
+                
+                if 'read' not in doc:
+                    doc['read'] = False
+                if 'id' not in doc:
+                    doc['id'] = str(random.randint(10000, 99999))
+                
+                library.append(doc)
             return library
         except Exception as e:
             st.error(f"Error loading from MongoDB: {e}")
             return load_from_file()
     else:
         return load_from_file()
-    
-# ? if mongo is not available then data store in JSON file 
+
 
 def load_from_file():
     if os.path.exists("library.json"):
         try:
             with open("library.json", "r") as file:
-                return json.load(file)
+                library = json.load(file)
+                for book in library:
+                    if 'read' not in book:
+                        book['read'] = False
+                    if 'id' not in book:
+                        book['id'] = str(random.randint(10000, 99999))
+                return library
         except json.JSONDecodeError:
             st.error("Error loading library file. Starting with an empty library.")
     return []
+
 
 def save_library(library):
     if st.session_state.mongo_available:
@@ -227,9 +238,14 @@ def save_library(library):
             st.session_state.mongo_collection.delete_many({})
             if library:
                 for book in library:
-                    if '_id' in book and isinstance(book['_id'], str):
-                        del book['_id']
-                st.session_state.mongo_collection.insert_many(library)
+                    book_copy = book.copy()
+                    if '_id' in book_copy and isinstance(book_copy['_id'], str):
+                        del book_copy['_id']
+                    if 'read' not in book_copy:
+                        book_copy['read'] = False
+                    if 'id' not in book_copy:
+                        book_copy['id'] = str(random.randint(10000, 99999))
+                    st.session_state.mongo_collection.insert_one(book_copy)
             return True
         except Exception as e:
             st.error(f"Error saving to MongoDB: {e}")
@@ -237,13 +253,16 @@ def save_library(library):
     else:
         return save_to_file(library)
 
+
 def save_to_file(library):
     with open("library.json", "w") as file:
         json.dump(library, file, indent=4)
         return True
 
+
 if 'library' not in st.session_state:
     st.session_state.library = load_library()
+
 
 def add_book(title, author, year, genre, read_status):
     if not title or not author:
@@ -284,58 +303,69 @@ def add_book(title, author, year, genre, read_status):
         save_to_file(st.session_state.library)
         return True
 
+
 def remove_book(book_id):
     if st.session_state.mongo_available:
         try:
             st.session_state.mongo_collection.delete_one({"id": book_id})
-            st.session_state.library = [book for book in st.session_state.library if book["id"] != book_id]
+            st.session_state.library = [book for book in st.session_state.library if book.get("id") != book_id]
             return True
         except Exception as e:
             st.error(f"Error removing book from MongoDB: {e}")
             for i, book in enumerate(st.session_state.library):
-                if book["id"] == book_id:
+                if book.get("id") == book_id:
                     del st.session_state.library[i]
                     save_to_file(st.session_state.library)
                     return True
             return False
     else:
         for i, book in enumerate(st.session_state.library):
-            if book["id"] == book_id:
+            if book.get("id") == book_id:
                 del st.session_state.library[i]
                 save_to_file(st.session_state.library)
                 return True
-        return False  
+        return False
+
 
 def toggle_read_status(book_id):
     if st.session_state.mongo_available:
         try:
             book = st.session_state.mongo_collection.find_one({"id": book_id})
             if book:
+                if 'read' not in book:
+                    book['read'] = False
                 new_status = not book["read"]
                 st.session_state.mongo_collection.update_one(
                     {"id": book_id},
                     {"$set": {"read": new_status}}
                 )
                 for book in st.session_state.library:
-                    if book["id"] == book_id:
+                    if book.get("id") == book_id:
                         book["read"] = new_status
                 return True
             return False
         except Exception as e:
             st.error(f"Error updating book status in MongoDB: {e}")
             for book in st.session_state.library:
-                if book["id"] == book_id:
+                if book.get("id") == book_id:
+                    # Ensure 'read' field exists
+                    if 'read' not in book:
+                        book['read'] = False
                     book["read"] = not book["read"]
                     save_to_file(st.session_state.library)
                     return True
             return False
     else:
         for book in st.session_state.library:
-            if book["id"] == book_id:
+            if book.get("id") == book_id:
+                # Ensure 'read' field exists
+                if 'read' not in book:
+                    book['read'] = False
                 book["read"] = not book["read"]
                 save_to_file(st.session_state.library)
                 return True
         return False
+
 
 def search_books(search_term, search_by):
     search_term = search_term.lower()
@@ -349,14 +379,32 @@ def search_books(search_term, search_by):
             results = list(cursor)
             for book in results:
                 book['_id'] = str(book['_id'])
+                # Ensure required fields exist
+                if 'read' not in book:
+                    book['read'] = False
+                if 'id' not in book:
+                    book['id'] = str(random.randint(10000, 99999))
             return results
         except Exception as e:
             st.error(f"Error searching books in MongoDB: {e}")
-            return [book for book in st.session_state.library 
-                    if search_term in str(book[search_by]).lower()]
+            results = [book for book in st.session_state.library 
+                    if search_term in str(book.get(search_by, "")).lower()]
+            for book in results:
+                if 'read' not in book:
+                    book['read'] = False
+                if 'id' not in book:
+                    book['id'] = str(random.randint(10000, 99999))
+            return results
     else:
-        return [book for book in st.session_state.library 
-                if search_term in str(book[search_by]).lower()]
+        results = [book for book in st.session_state.library 
+                if search_term in str(book.get(search_by, "")).lower()]
+        for book in results:
+            if 'read' not in book:
+                book['read'] = False
+            if 'id' not in book:
+                book['id'] = str(random.randint(10000, 99999))
+        return results
+
 
 def get_statistics():
     if st.session_state.mongo_available:
@@ -376,9 +424,16 @@ def get_statistics():
     else:
         return get_statistics_from_memory()
 
+
 def get_statistics_from_memory():
     total_books = len(st.session_state.library)
-    read_books = sum(1 for book in st.session_state.library if book["read"])
+    # Ensure each book has required fields before counting
+    for book in st.session_state.library:
+        if 'read' not in book:
+            book['read'] = False
+        if 'id' not in book:
+            book['id'] = str(random.randint(10000, 99999))
+    read_books = sum(1 for book in st.session_state.library if book.get("read", False))
     percentage_read = (read_books / total_books * 100) if total_books > 0 else 0
     return {
         "total": total_books,
@@ -387,6 +442,7 @@ def get_statistics_from_memory():
         "percentage": percentage_read
     }
 
+
 def get_unique_genres():
     if st.session_state.mongo_available:
         try:
@@ -394,13 +450,14 @@ def get_unique_genres():
                 {"$group": {"_id": "$genre"}},
                 {"$sort": {"_id": 1}}
             ]
-            genres = ["All"] + [doc["_id"] for doc in st.session_state.mongo_collection.aggregate(pipeline)]
+            genres = ["All"] + [doc["_id"] for doc in st.session_state.mongo_collection.aggregate(pipeline) if doc["_id"] is not None]
             return genres
         except Exception as e:
             st.error(f"Error fetching genres from MongoDB: {e}")
-            return ["All"] + sorted(list(set(book["genre"] for book in st.session_state.library)))
+            return ["All"] + sorted(list(set(book.get("genre", "Other") for book in st.session_state.library)))
     else:
-        return ["All"] + sorted(list(set(book["genre"] for book in st.session_state.library)))
+        return ["All"] + sorted(list(set(book.get("genre", "Other") for book in st.session_state.library)))
+
 
 def get_filtered_books(filter_status, filter_genre, sort_by):
     if st.session_state.mongo_available:
@@ -426,6 +483,11 @@ def get_filtered_books(filter_status, filter_genre, sort_by):
             filtered_library = list(cursor)
             for book in filtered_library:
                 book['_id'] = str(book['_id'])
+                # Ensure required fields exist
+                if 'read' not in book:
+                    book['read'] = False
+                if 'id' not in book:
+                    book['id'] = str(random.randint(10000, 99999))
             return filtered_library
                 
         except Exception as e:
@@ -434,23 +496,32 @@ def get_filtered_books(filter_status, filter_genre, sort_by):
     else:
         return filter_books_in_memory(filter_status, filter_genre, sort_by)
 
+
 def filter_books_in_memory(filter_status, filter_genre, sort_by):
     filtered_library = st.session_state.library.copy()
+    
+    for book in filtered_library:
+        if 'read' not in book:
+            book['read'] = False
+        if 'id' not in book:
+            book['id'] = str(random.randint(10000, 99999))
+            
     if filter_status == "Read":
-        filtered_library = [b for b in filtered_library if b["read"]]
+        filtered_library = [b for b in filtered_library if b.get("read", False)]
     elif filter_status == "Unread":
-        filtered_library = [b for b in filtered_library if not b["read"]]
+        filtered_library = [b for b in filtered_library if not b.get("read", False)]
     if filter_genre != "All":
-        filtered_library = [b for b in filtered_library if b["genre"] == filter_genre]
+        filtered_library = [b for b in filtered_library if b.get("genre") == filter_genre]
     if sort_by == "Title (A-Z)":
-        filtered_library.sort(key=lambda x: x["title"])
+        filtered_library.sort(key=lambda x: x.get("title", ""))
     elif sort_by == "Author (A-Z)":
-        filtered_library.sort(key=lambda x: x["author"])
+        filtered_library.sort(key=lambda x: x.get("author", ""))
     elif sort_by == "Year (Newest)":
-        filtered_library.sort(key=lambda x: x["year"], reverse=True)
+        filtered_library.sort(key=lambda x: x.get("year", 0), reverse=True)
     elif sort_by == "Added":
-        filtered_library.sort(key=lambda x: x["date_added"], reverse=True)
+        filtered_library.sort(key=lambda x: x.get("date_added", ""), reverse=True)
     return filtered_library
+
 
 st.markdown(
     """
@@ -487,13 +558,19 @@ with tabs[0]:
     else:
         st.markdown(f"<p style='color: #6b7280; margin-bottom: 1rem;'>{len(filtered_library)} books</p>", unsafe_allow_html=True)
         for book in filtered_library:
+            
+            if 'read' not in book:
+                book['read'] = False
+            if 'id' not in book:
+                book['id'] = str(random.randint(10000, 99999))
+                
             with st.container():
                 card_class = "book-card read-card" if book["read"] else "book-card unread-card"
                 st.markdown(f"""
                 <div class="{card_class}">
                     <div>
-                        <div class="book-title">{book['title']}</div>
-                        <div class="book-meta">by {book['author']} • {book['year']} • {book['genre']}</div>
+                        <div class="book-title">{book.get('title', 'No Title')}</div>
+                        <div class="book-meta">by {book.get('author', 'Unknown')} • {book.get('year', 'N/A')} • {book.get('genre', 'Uncategorized')}</div>
                         <div style="margin-top: 0.75rem;">
                             <span class="status-badge {'read-badge' if book['read'] else 'unread-badge'}">
                                 { 'Read' if book['read'] else 'Unread' }
@@ -544,12 +621,18 @@ with tabs[2]:
             if results:
                 st.subheader(f"{len(results)} Results")
                 for book in results:
+                    # Ensure required fields exist
+                    if 'read' not in book:
+                        book['read'] = False
+                    if 'id' not in book:
+                        book['id'] = str(random.randint(10000, 99999))
+                        
                     card_class = "book-card read-card" if book["read"] else "book-card unread-card"
                     st.markdown(f"""
                     <div class="{card_class}">
                         <div>
-                            <div class="book-title">{book['title']}</div>
-                            <div class="book-meta">by {book['author']} • {book['year']} • {book['genre']}</div>
+                            <div class="book-title">{book.get('title', 'No Title')}</div>
+                            <div class="book-meta">by {book.get('author', 'Unknown')} • {book.get('year', 'N/A')} • {book.get('genre', 'Uncategorized')}</div>
                             <div style="margin-top: 0.75rem;">
                                 <span class="status-badge {'read-badge' if book['read'] else 'unread-badge'}">
                                     { 'Read' if book['read'] else 'Unread' }
@@ -597,4 +680,4 @@ st.markdown("""
     <p>Personal Library Manager</p>
     <p>made with ❤️ by <a href="https://nihal-khan.vercel.app/">Nihal Khan Ghauri</a></p>
 </div>
-""", unsafe_allow_html=True)    
+""", unsafe_allow_html=True)
