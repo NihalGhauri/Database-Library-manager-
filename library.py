@@ -5,7 +5,6 @@ import os
 import random
 from datetime import datetime
 from pymongo import MongoClient
-from motor.motor_asyncio import AsyncIOMotorClient
 
 
 def connect_to_mongodb():
