@@ -1,15 +1,31 @@
-
 import streamlit as st
 import json
 import os
 import random
 from datetime import datetime
 from pymongo import MongoClient
+from dotenv import load_dotenv
 
+st.set_page_config(
+    page_title="Personal Library Manager",
+    page_icon="📚",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+load_dotenv()
 
 def connect_to_mongodb():
     try:
-        connection_string = st.secrets["DATABASE"]
+        connection_string = os.getenv("DATABASE")
+        if not connection_string:
+            st.error("MongoDB connection string not found in environment variables")
+            try:
+               connection_string = st.secrets["DATABASE"]
+            except:
+                st.error("MongoDB connection string not found in secrets")
+                return None
+                
         client = MongoClient(connection_string)
         db = client["personal_library"]
         collection = db["books"]
@@ -27,12 +43,6 @@ if 'mongo_available' not in st.session_state:
     st.session_state.mongo_available = st.session_state.mongo_collection is not None
 
 
-st.set_page_config(
-    page_title="Personal Library Manager",
-    page_icon="📚",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
 
 st.markdown("""
 <style>
@@ -347,7 +357,6 @@ def toggle_read_status(book_id):
             st.error(f"Error updating book status in MongoDB: {e}")
             for book in st.session_state.library:
                 if book.get("id") == book_id:
-                    # Ensure 'read' field exists
                     if 'read' not in book:
                         book['read'] = False
                     book["read"] = not book["read"]
@@ -357,7 +366,6 @@ def toggle_read_status(book_id):
     else:
         for book in st.session_state.library:
             if book.get("id") == book_id:
-                # Ensure 'read' field exists
                 if 'read' not in book:
                     book['read'] = False
                 book["read"] = not book["read"]
@@ -378,7 +386,6 @@ def search_books(search_term, search_by):
             results = list(cursor)
             for book in results:
                 book['_id'] = str(book['_id'])
-                # Ensure required fields exist
                 if 'read' not in book:
                     book['read'] = False
                 if 'id' not in book:
@@ -426,7 +433,6 @@ def get_statistics():
 
 def get_statistics_from_memory():
     total_books = len(st.session_state.library)
-    # Ensure each book has required fields before counting
     for book in st.session_state.library:
         if 'read' not in book:
             book['read'] = False
@@ -482,7 +488,6 @@ def get_filtered_books(filter_status, filter_genre, sort_by):
             filtered_library = list(cursor)
             for book in filtered_library:
                 book['_id'] = str(book['_id'])
-                # Ensure required fields exist
                 if 'read' not in book:
                     book['read'] = False
                 if 'id' not in book:
@@ -620,7 +625,6 @@ with tabs[2]:
             if results:
                 st.subheader(f"{len(results)} Results")
                 for book in results:
-                    # Ensure required fields exist
                     if 'read' not in book:
                         book['read'] = False
                     if 'id' not in book:
@@ -676,7 +680,6 @@ with tabs[3]:
 
 st.markdown("""
 <div class="footer">
-    <p>Personal Library Manager</p>
-    <p>made with ❤️ by <a href="https://nihal-khan.vercel.app/">Nihal Khan Ghauri</a></p>
+    <p>made with ❤️ by <a href="https://nihalkhanghauri.vercel.app/">Nihal Khan Ghauri</a></p>
 </div>
 """, unsafe_allow_html=True)
